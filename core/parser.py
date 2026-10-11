@@ -240,19 +240,19 @@ class Parser:
             if w in IF:
                 return self.parse_if(line_indent)
             if w in WHILE:
-                return self.parse_while(parent_indent)
+                return self.parse_while(line_indent)
             if w in FOR:
-                return self.parse_for(parent_indent)
+                return self.parse_for(line_indent)
             if w in FUNCTION:
-                return self.parse_function(parent_indent)
+                return self.parse_function(line_indent)
             if w in CLASS:
-                return self.parse_class(parent_indent)
+                return self.parse_class(line_indent)
             if w in RETURN:
                 return self.parse_return()
             if w in IMPORT:
                 return self.parse_import()
             if w in TRY:
-                return self.parse_try(parent_indent)
+                return self.parse_try(line_indent)
             if w in THROW:
                 return self.parse_throw()
             if w in WARN:
