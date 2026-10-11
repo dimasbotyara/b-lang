@@ -216,13 +216,16 @@ class Interpreter:
             self._exec_block(node.else_body, Scope(scope))
 
     def exec_While(self, node, scope):
-        while self._truthy(self.eval_expr(node.cond, scope)):
-            try:
-                self._exec_block(node.body, Scope(scope))
-            except BreakSignal:
-                break
-            except ContinueSignal:
-                continue
+        try:
+            while self._truthy(self.eval_expr(node.cond, scope)):
+                try:
+                    self._exec_block(node.body, Scope(scope))
+                except BreakSignal:
+                    break
+                except ContinueSignal:
+                    continue
+        except KeyboardInterrupt:
+            cprint("\n☠️  Прервано", fg="коралловый"); return
 
     def exec_For(self, node, scope):
         if node.iterable is not None:
@@ -436,9 +439,12 @@ class Interpreter:
         prompt = self.eval_expr(n.prompt, s) if n.prompt else ""
         try:
             raw = input(str(prompt))
-        except (EOFError, KeyboardInterrupt):
-            return ""
-        return raw  # возвращаем строку; приведение сделает Let
+        except EOFError:
+            raw = ""                       # Ctrl+D — пустая строка
+        # KeyboardInterrupt НЕ ловим — пусть летит наверх
+        if not raw.strip() and n.default is not None:
+            return self.eval_expr(n.default, s)
+        return raw
 
     # ---------- вспомогательные ----------
     def _call(self, func, args, line):
@@ -517,6 +523,11 @@ class Interpreter:
                 f"Не удалось привести {type(value).__name__} к {type_}",
                 line=line, lang=self.lang
             )
+            if type_ == "number": return 0
+            if type_ == "string": return ""
+            if type_ == "bool":   return False
+            if type_ == "list":   return []
+            if type_ == "dict":   return {}
             return value
 
     def _truthy(self, v):
@@ -553,8 +564,8 @@ class Interpreter:
                 # Фильтруем служебные токены отступов и переносов
                 filtered_tokens = [t for t in tokens if t.type not in (TokType.INDENT, TokType.NEWLINE)]
 
-                ast = Parser(filtered_tokens)
-                node = ast.parse_expr()
+                p = Parser(filtered_tokens)
+                node = p.parse_bare_call(p.parse_expr())
                 return self._stringify(self.eval_expr(node, scope))
             except Exception as e:
                 if self.debug:

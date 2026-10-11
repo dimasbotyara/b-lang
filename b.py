@@ -173,10 +173,19 @@ def main():
         from core.interpreter import Interpreter
         from core.lexer import tokenize
         from core.parser import Parser
-        src = Path(args[1]).read_text(encoding="utf-8")
-        tokens = tokenize(src)
-        ast = Parser(tokens).parse()
-        Interpreter(debug=True, filename=args[1]).run(ast)
+        from core.errors import BError, handle_error
+        try:
+            src = Path(args[1]).read_text(encoding="utf-8")
+            tokens = tokenize(src)
+            ast = Parser(tokens).parse()
+            Interpreter(debug=True, filename=args[1]).run(ast)
+        except BError as e:
+            handle_error(e, args[1])
+        except KeyboardInterrupt:
+            print("\n☠️  Программа прервана. / Interrupted.")
+        except Exception as e:
+            from core.errors import handle_python_error
+            handle_python_error(e, args[1])
         return
 
     # --- Обычный запуск ---

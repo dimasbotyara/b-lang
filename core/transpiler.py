@@ -6,6 +6,7 @@ from pathlib import Path
 from core.lexer import tokenize
 from core.parser import *
 from core.keywords import normalize_type
+from core.lexer import TokType
 
 
 class TranspileError(Exception):
@@ -316,6 +317,25 @@ class Transpiler:
         self.in_class = False
         self.use_rich = False          # использовать rich для цветной печати
 
+    SELF_PRINTING = {
+        ("цвет", "радуга"), ("цвет", "rainbow"),
+        ("цвет", "огонь"),   ("цвет", "fire"),
+        ("цвет", "градиент"),("цвет", "gradient"),
+        ("цвет", "палитра"), ("цвет", "palette"),
+        ("color", "rainbow"),("color", "fire"),
+        ("color", "gradient"),("color", "palette"),
+        ("богатый", "печать"),("rich", "print"),
+    }
+
+    def _is_self_printing(self, node):
+        """Вызов типа цвет.радуга — печатает сам, не надо оборачивать в print."""
+        if isinstance(node, Call) and isinstance(node.func, Attr) \
+                and isinstance(node.func.obj, Name):
+            mod = node.func.obj.name.lower()
+            attr = node.func.attr.lower()
+            return (mod, attr) in self.SELF_PRINTING
+        return False
+
     # ---------- вспомогательные ----------
     def indent(self):
         return "    " * self.indent_level
@@ -483,7 +503,13 @@ class Transpiler:
         if not parts:
             return [self.indent() + "print()"]
         if len(parts) == 1:
+            if self._is_self_printing(node.args[0]):
+                return [self.indent() + parts[0]]
             return [self.indent() + f"print({parts[0]})"]
+        # Если среди аргументов есть самопечатающие — не оборачиваем
+        if any(self._is_self_printing(a) for a in node.args):
+            return [self.indent() + parts[0]] if len(parts) == 1 else \
+                [self.indent() + "; ".join(parts)]
         return [self.indent() + f"print({', '.join(parts)})"]
 
     def gen_If(self, node):
@@ -749,9 +775,8 @@ class Transpiler:
                 try:
                     tokens = tokenize(expr)
                     filtered = [t for t in tokens if t.type not in (TokType.INDENT, TokType.NEWLINE)]
-                    ast = Parser(filtered)
-                    expr_node = ast.parse_expr()
-                    # Транспилируем внутреннее выражение в чистый Python!
+                    p = Parser(filtered)
+                    expr_node = p.parse_bare_call(p.parse_expr())
                     py_expr = self.gen_expr(expr_node)
                     return "{" + py_expr + "}"
                 except Exception:

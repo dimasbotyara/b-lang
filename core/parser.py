@@ -208,7 +208,9 @@ class Parser:
     def parse_statement_line(self, parent_indent):
         """Парсит одну логическую строку (может содержать && — несколько операторов)."""
         # Пропускаем INDENT
+        line_indent = 0
         if self.peek().type == TokType.INDENT:
+            line_indent = self.peek().value
             self.advance()
 
         # Пустая строка?
@@ -216,17 +218,17 @@ class Parser:
             self.advance()
             return []
 
-        stmts = [self.parse_statement(parent_indent)]
+        stmts = [self.parse_statement(parent_indent, line_indent)]
         while self.peek().type == TokType.AMP:
             self.advance()
-            stmts.append(self.parse_statement(parent_indent))
+            stmts.append(self.parse_statement(parent_indent, line_indent))
 
         # Съесть newline
         if self.peek().type == TokType.NEWLINE:
             self.advance()
         return stmts
 
-    def parse_statement(self, parent_indent):
+    def parse_statement(self, parent_indent, line_indent=0):
         t = self.peek()
 
         if t.type == TokType.IDENT:
@@ -236,7 +238,7 @@ class Parser:
             if w in PRINT:
                 return self.parse_print()
             if w in IF:
-                return self.parse_if(parent_indent)
+                return self.parse_if(line_indent)
             if w in WHILE:
                 return self.parse_while(parent_indent)
             if w in FOR:
@@ -281,7 +283,7 @@ class Parser:
         value = None
         if self.peek().type == TokType.ASSIGN:
             self.advance()
-            value = self.parse_expr()
+            value = self.parse_bare_call(self.parse_expr())
         return Let(name, type_, value, line)
 
     def parse_assign_or_expr(self):
@@ -289,19 +291,29 @@ class Parser:
         expr = self.parse_expr()
         if self.peek().type == TokType.ASSIGN:
             self.advance()
-            value = self.parse_expr()
+            value = self.parse_bare_call(self.parse_expr())
             return Assign(expr, value, line)
-        return ExprStmt(expr, line)
+        return ExprStmt(self.parse_bare_call(expr), line)
 
     def parse_print(self):
         line = self.peek().line
-        self.advance()  # print
+        self.advance()
         args = []
         fg, bg, styles = None, None, []
 
-        # Собираем выражения, пока не наткнёмся на модификатор или терминатор
         if not self._is_print_terminator() and not self._is_print_modifier():
-            args.append(self.parse_expr())
+            first = self.parse_bare_call(self.parse_expr())
+            # Если это модульный вызов — дособираем аргументы
+            if isinstance(first, Attr) and isinstance(first.obj, Name) and self._is_module_name(first.obj.name):
+                # бесскобочный вызов
+                call_args = []
+                if self._starts_expr(self.peek()):
+                    call_args.append(self.parse_expr())
+                    while self.peek().type == TokType.COMMA:
+                        self.advance()
+                        call_args.append(self.parse_expr())
+                first = Call(first, call_args, line)
+            args.append(first)
             while self.peek().type == TokType.COMMA:
                 self.advance()
                 if self._is_print_terminator() or self._is_print_modifier():
@@ -352,6 +364,63 @@ class Parser:
             return False
 
         return True
+
+    def _is_module_name(self, name):
+        """Проверяет, является ли имя импортированным модулем.
+
+        Модуль считается известным, если он есть в stdlib или в списке
+        встроенных объектов (цвет/color).
+        """
+        name = name.lower()
+        # встроенные спец-объекты
+        if name in ("цвет", "color"):
+            return True
+        # модули из stdlib
+        try:
+            from stdlib import all_modules
+            return name in all_modules()
+        except Exception:
+            # подстраховка — известные имена
+            return name in {
+                "рандом", "random", "математика", "math", "время", "time",
+                "файл", "file", "текст", "text", "сеть", "net",
+                "система", "sys", "криптография", "crypto",
+                "богатый", "rich", "вопрос", "ask",
+            }
+
+    def parse_bare_call(self, node):
+        """Если node — Attr модульной функции и дальше идут аргументы,
+        оборачивает в Call (бесскобочный вызов). Иначе возвращает как есть."""
+        if isinstance(node, Attr) and isinstance(node.obj, Name) \
+                and self._is_module_name(node.obj.name) \
+                and self._starts_expr(self.peek()):
+            call_args = [self.parse_expr()]
+            while self.peek().type == TokType.COMMA:
+                self.advance()
+                call_args.append(self.parse_expr())
+            return Call(node, call_args, node.line)
+        return node
+
+    def _starts_expr(self, t):
+        if t.type in (TokType.NUMBER, TokType.STRING,
+                    TokType.LPAREN, TokType.LBRACK, TokType.LBRACE):
+            return True
+        if t.type == TokType.OP and t.value == "-":
+            return True
+        if t.type == TokType.IDENT:
+            w = t.value.lower()
+            # модификаторы печати не начинают выражение в этом контексте
+            if w in COLOR or w in BG or w in STYLES:
+                nxt = self.peek(1)
+                # но цвет.радуга — начинают (это вызов)
+                if nxt and nxt.type == TokType.DOT:
+                    return True
+                return False
+            # ключевые слова-операторы тоже не аргументы
+            if w in (AND | OR | NOT):
+                return False
+            return True
+        return False
 
     def _parse_color_value(self):
         """Парсит имя цвета, #hex, rgb R,G,B."""
